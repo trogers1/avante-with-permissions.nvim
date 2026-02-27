@@ -49,10 +49,19 @@ function Suggestion:new(id)
   instance.ignore_patterns = gitignore_patterns
   instance.negate_patterns = gitignore_negate_patterns
   instance.is_on_throttle = false
+
+  -- ACP autosuggestions use a dedicated ACP client/session so we don't
+  -- interfere with the sidebar session.
+  instance.acp_client = nil
+  instance.acp_session_id = nil
+
   if Config.behaviour.auto_suggestions then
-    if not vim.g.avante_login or vim.g.avante_login == false then
-      api.nvim_exec_autocmds("User", { pattern = Providers.env.REQUEST_LOGIN_PATTERN })
-      vim.g.avante_login = true
+    local is_acp_provider = Config.acp_providers and Config.acp_providers[Config.provider] ~= nil
+    if not is_acp_provider then
+      if not vim.g.avante_login or vim.g.avante_login == false then
+        api.nvim_exec_autocmds("User", { pattern = Providers.env.REQUEST_LOGIN_PATTERN })
+        vim.g.avante_login = true
+      end
     end
     instance:setup_autocmds()
   end
@@ -63,6 +72,10 @@ function Suggestion:destroy()
   self:stop_timer()
   self:reset()
   self:delete_autocmds()
+
+  if self.acp_client and self.acp_client.stop then pcall(function() self.acp_client:stop() end) end
+  self.acp_client = nil
+  self.acp_session_id = nil
 end
 
 ---Validates a potential suggestion item, ensuring that it has all needed data
@@ -173,82 +186,125 @@ function Suggestion:suggest()
 
   local full_response = ""
 
-  local provider = Providers[Config.auto_suggestions_provider or Config.provider]
+  local is_acp_provider = Config.acp_providers and Config.acp_providers[Config.provider] ~= nil
+  local acp_provider_name = nil
+  if is_acp_provider then
+    acp_provider_name = Config.auto_suggestions_provider or Config.provider
+    if not (Config.acp_providers and Config.acp_providers[acp_provider_name]) then
+      acp_provider_name = Config.provider
+    end
+  end
 
-  ---@type AvanteLLMMessage[]
-  local llm_messages = {
-    {
-      role = "user",
-      content = [[
-<filepath>a.py</filepath>
-<code>
-L1: def fib
-L2:
-L3: if __name__ == "__main__":
-L4:     # just pass
-L5:     pass
-</code>
-      ]],
-    },
-    {
-      role = "assistant",
-      content = "ok",
-    },
-    {
-      role = "user",
-      content = '{"insertSpaces":true,"tabSize":4,"indentSize":4,"position":{"row":1,"col":7}}',
-    },
-    {
-      role = "assistant",
-      content = [[
-<suggestions>
-[
-  [
-    {
-      "start_row": 1,
-      "end_row": 1,
-      "content": "def fib(n):\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)"
-    },
-    {
-      "start_row": 4,
-      "end_row": 5,
-      "content": "    fib(int(input()))"
-    },
-  ],
-  [
-    {
-      "start_row": 1,
-      "end_row": 1,
-      "content": "def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        yield a\n        a, b = b, a + b"
-    },
-    {
-      "start_row": 4,
-      "end_row": 5,
-      "content": "    list(fib(int(input())))"
-    },
-  ]
-]
-</suggestions>
-          ]],
-    },
-  }
 
-  local history_messages = vim
-    .iter(llm_messages)
-    :map(function(msg) return HistoryMessage:new(msg.role, msg.content) end)
-    :totable()
+  local history_messages
+  local provider = nil
+
+  if is_acp_provider then
+    local cursor_json = vim.json.encode({
+      insertSpaces = doc.insertSpaces,
+      tabSize = doc.tabSize,
+      indentSize = doc.indentSize,
+      position = doc.position,
+    })
+
+    local user_prompt = table.concat({
+      "You are generating inline editor suggestions for the current buffer.",
+      "Return ONLY a JSON array (or wrap it in <suggestions>...</suggestions>) that matches this schema:",
+      "[ [ {start_row:number, end_row:number, content:string}, ... ], ... ]",
+      "Rows are 1-indexed and refer to the line numbers in <code> below.",
+      "Do not include markdown fences.",
+      "",
+      string.format("<filetype>%s</filetype>", filetype),
+      string.format("<filepath>%s</filepath>", doc.relativePath or ""),
+      "<cursor>" .. cursor_json .. "</cursor>",
+      "<code>",
+      code_content,
+      "</code>",
+    }, "\n")
+
+    history_messages = { HistoryMessage:new("user", user_prompt) }
+  else
+    provider = Providers[Config.auto_suggestions_provider or Config.provider]
+
+    ---@type AvanteLLMMessage[]
+    local llm_messages = {
+      {
+        role = "user",
+        content = [[
+ <filepath>a.py</filepath>
+ <code>
+ L1: def fib
+ L2:
+ L3: if __name__ == "__main__":
+ L4:     # just pass
+ L5:     pass
+ </code>
+       ]],
+      },
+      {
+        role = "assistant",
+        content = "ok",
+      },
+      {
+        role = "user",
+        content = '{"insertSpaces":true,"tabSize":4,"indentSize":4,"position":{"row":1,"col":7}}',
+      },
+      {
+        role = "assistant",
+        content = [[
+ <suggestions>
+ [
+   [
+     {
+       "start_row": 1,
+       "end_row": 1,
+       "content": "def fib(n):\n    if n < 2:\n        return n\n    return fib(n - 1) + fib(n - 2)"
+     },
+     {
+       "start_row": 4,
+       "end_row": 5,
+       "content": "    fib(int(input()))"
+     },
+   ],
+   [
+     {
+       "start_row": 1,
+       "end_row": 1,
+       "content": "def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        yield a\n        a, b = b, a + b"
+     },
+     {
+       "start_row": 4,
+       "end_row": 5,
+       "content": "    list(fib(int(input())))"
+     },
+   ]
+ ]
+ </suggestions>
+           ]],
+      },
+    }
+
+    history_messages = vim
+      .iter(llm_messages)
+      :map(function(msg) return HistoryMessage:new(msg.role, msg.content) end)
+      :totable()
+  end
 
   local diagnostics = Utils.lsp.get_diagnostics(bufnr)
 
   Llm.stream({
     provider = provider,
-    ask = true,
     diagnostics = vim.json.encode(diagnostics),
     selected_files = { { content = code_content, file_type = filetype, path = "" } },
     code_lang = filetype,
     history_messages = history_messages,
     instructions = vim.json.encode(doc),
     mode = "suggesting",
+    acp_provider_name = acp_provider_name,
+    acp_client = self.acp_client,
+    on_save_acp_client = function(client) self.acp_client = client end,
+    acp_session_id = self.acp_session_id,
+    on_save_acp_session_id = function(session_id) self.acp_session_id = session_id end,
     on_start = function(_) end,
     on_chunk = function(chunk) full_response = full_response .. chunk end,
     on_stop = function(stop_opts)

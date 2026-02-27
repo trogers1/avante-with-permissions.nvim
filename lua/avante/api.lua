@@ -31,7 +31,7 @@ end
 
 ---@param target avante.ProviderName
 function M.switch_provider(target)
-  local sidebar = require("avante").get()
+  local sidebar, _, suggestion = require("avante").get()
   local prev_provider = Config.provider
 
   require("avante.providers").refresh(target)
@@ -50,6 +50,13 @@ function M.switch_provider(target)
 
     -- Reconnect immediately if sidebar is open and we're switching to ACP.
     if next_is_acp and sidebar.is_open and sidebar:is_open() then sidebar:handle_submit("") end
+  end
+
+  -- Also reset the autosuggestions ACP client/session when switching ACP providers.
+  if suggestion and prev_provider ~= target and (prev_is_acp or next_is_acp) then
+    if suggestion.acp_client and suggestion.acp_client.stop then pcall(function() suggestion.acp_client:stop() end) end
+    suggestion.acp_client = nil
+    suggestion.acp_session_id = nil
   end
 end
 

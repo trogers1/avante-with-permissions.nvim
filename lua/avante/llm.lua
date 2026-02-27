@@ -916,12 +916,13 @@ local function truncate_history_for_recovery(history_messages)
 end
 ---@param opts AvanteLLMStreamOptions
 function M._stream_acp(opts)
-  Utils.debug("use ACP", Config.provider)
+  local acp_provider_name = opts.acp_provider_name or Config.provider
+  Utils.debug("use ACP", acp_provider_name)
   ---@type table<string, avante.HistoryMessage>
   local tool_call_messages = {}
   ---@type avante.HistoryMessage
   local last_tool_call_message = nil
-  local acp_provider = Config.acp_providers[Config.provider]
+  local acp_provider = opts.acp_provider or (Config.acp_providers and Config.acp_providers[acp_provider_name])
   local prev_text_message_content = ""
   local history_messages = {}
   local get_history_messages = function()
@@ -983,6 +984,11 @@ function M._stream_acp(opts)
   local acp_client = opts.acp_client
   local session_id = opts.acp_session_id
   if not acp_client then
+    if not acp_provider then
+      opts.on_stop({ reason = "error", error = "ACP provider not configured: " .. tostring(acp_provider_name) })
+      return
+    end
+
     local acp_config = vim.tbl_deep_extend("force", acp_provider, {
       ---@type ACPHandlers
       handlers = {
@@ -1753,8 +1759,13 @@ function M._stream(opts)
   -- Reset the cancellation flag at the start of a new request
   if LLMToolHelpers then LLMToolHelpers.is_cancelled = false end
 
-  local acp_provider = Config.acp_providers[Config.provider]
-  if acp_provider then return M._stream_acp(opts) end
+  local acp_provider_name = opts.acp_provider_name or Config.provider
+  local acp_provider = Config.acp_providers and Config.acp_providers[acp_provider_name]
+  if acp_provider then
+    opts.acp_provider_name = acp_provider_name
+    opts.acp_provider = acp_provider
+    return M._stream_acp(opts)
+  end
 
   local provider = opts.provider or Providers[Config.provider]
   opts.session_ctx = opts.session_ctx or {}
