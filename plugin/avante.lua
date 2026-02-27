@@ -124,8 +124,10 @@ cmd(
 cmd("Refresh", function() require("avante.api").refresh() end, { desc = "avante: refresh windows" })
 cmd("Focus", function() require("avante.api").focus() end, { desc = "avante: switch focus windows" })
 cmd("SwitchProvider", function(_opts)
-  local providers = vim.tbl_keys(Config.providers)
-  vim.tbl_extend("force", providers, Config.acp_providers)
+  local providers = vim.tbl_keys(Config.providers or {})
+  -- Config.acp_providers is a map, so we need its keys.
+  vim.list_extend(providers, vim.tbl_keys(Config.acp_providers or {}))
+  table.sort(providers)
   vim.ui.select(providers, { prompt = "Provider> " }, function(choice, idx)
     if idx ~= nil then require("avante.api").switch_provider(vim.trim(choice)) end
   end)

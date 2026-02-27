@@ -30,7 +30,28 @@ function M.switch_input_provider(target_provider)
 end
 
 ---@param target avante.ProviderName
-function M.switch_provider(target) require("avante.providers").refresh(target) end
+function M.switch_provider(target)
+  local sidebar = require("avante").get()
+  local prev_provider = Config.provider
+
+  require("avante.providers").refresh(target)
+
+  -- ACP clients are spawned processes (stdio transport). When switching between ACP providers
+  -- (or ACP <-> non-ACP), we need to reset the client/session so the new provider config is used.
+  local prev_is_acp = Config.acp_providers and Config.acp_providers[prev_provider] ~= nil
+  local next_is_acp = Config.acp_providers and Config.acp_providers[target] ~= nil
+
+  if sidebar and prev_provider ~= target and (prev_is_acp or next_is_acp) then
+    if sidebar.acp_client and sidebar.acp_client.stop then pcall(function() sidebar.acp_client:stop() end) end
+    sidebar.acp_client = nil
+
+    -- New ACP provider implies a new ACP session.
+    if sidebar.chat_history then sidebar.chat_history.acp_session_id = nil end
+
+    -- Reconnect immediately if sidebar is open and we're switching to ACP.
+    if next_is_acp and sidebar.is_open and sidebar:is_open() then sidebar:handle_submit("") end
+  end
+end
 
 ---@param path string
 local function to_windows_path(path)
