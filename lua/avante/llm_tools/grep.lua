@@ -71,17 +71,26 @@ M.returns = {
 ---@type AvanteLLMToolFunc<{ path: string, query: string, case_sensitive?: boolean, include_pattern?: string, exclude_pattern?: string }>
 function M.func(input, opts)
   local on_log = opts.on_log
+  local on_complete = opts.on_complete
 
   local abs_path = Helpers.get_abs_path(input.path)
-  if not Helpers.has_permission_to_access(abs_path) then return "", "No permission to access path: " .. abs_path end
-  if not Path:new(abs_path):exists() then return "", "No such file or directory: " .. abs_path end
+
+  local function run()
+    local function finish(result, err)
+      if not on_complete then return result, err end
+      on_complete(result, err)
+    end
+
+    if not Path:new(abs_path):exists() then
+      return finish("", "No such file or directory: " .. abs_path)
+    end
 
   ---check if any search cmd is available
   local search_cmd = vim.fn.exepath("rg")
   if search_cmd == "" then search_cmd = vim.fn.exepath("ag") end
   if search_cmd == "" then search_cmd = vim.fn.exepath("ack") end
   if search_cmd == "" then search_cmd = vim.fn.exepath("grep") end
-  if search_cmd == "" then return "", "No search command found" end
+    if search_cmd == "" then return finish("", "No search command found") end
 
   ---execute the search command
   local cmd = {}
@@ -148,11 +157,26 @@ function M.func(input, opts)
   end
 
   Utils.debug("cmd", table.concat(cmd, " "))
-  if on_log then on_log("Running command: " .. table.concat(cmd, " ")) end
-  local result = vim.system(cmd, { text = true }):wait().stdout or ""
-  local filepaths = vim.split(result, "\n")
+    if on_log then on_log("Running command: " .. table.concat(cmd, " ")) end
+    local stdout = vim.system(cmd, { text = true }):wait().stdout or ""
+    local filepaths = vim.split(stdout, "\n")
+    local encoded = vim.json.encode(filepaths)
+    return finish(encoded, nil)
+  end
 
-  return vim.json.encode(filepaths), nil
+  if on_complete then
+    Helpers.check_path_permission(abs_path, opts, function(ok, err)
+      if not ok then
+        on_complete("", err or ("No permission to access path: " .. abs_path))
+        return
+      end
+      run()
+    end)
+    return
+  end
+
+  if not Helpers.has_permission_to_access(abs_path) then return "", "No permission to access path: " .. abs_path end
+  return run()
 end
 
 return M

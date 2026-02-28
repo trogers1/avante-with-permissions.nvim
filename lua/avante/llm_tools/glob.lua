@@ -49,27 +49,43 @@ function M.func(input, opts)
   local on_log = opts.on_log
   local on_complete = opts.on_complete
   local abs_path = Helpers.get_abs_path(input.path)
-  if not Helpers.has_permission_to_access(abs_path) then return "", "No permission to access path: " .. abs_path end
-  if on_log then on_log("path: " .. abs_path) end
-  if on_log then on_log("pattern: " .. input.pattern) end
-  local files = vim.fn.glob(abs_path .. "/" .. input.pattern, true, true)
-  local truncated_files = {}
-  local is_truncated = false
-  local size = 0
-  for _, file in ipairs(files) do
-    size = size + #file
-    if size > 1024 * 10 then
-      is_truncated = true
-      break
+
+  local function run()
+    if on_log then on_log("path: " .. abs_path) end
+    if on_log then on_log("pattern: " .. input.pattern) end
+    local files = vim.fn.glob(abs_path .. "/" .. input.pattern, true, true)
+    local truncated_files = {}
+    local is_truncated = false
+    local size = 0
+    for _, file in ipairs(files) do
+      size = size + #file
+      if size > 1024 * 10 then
+        is_truncated = true
+        break
+      end
+      table.insert(truncated_files, file)
     end
-    table.insert(truncated_files, file)
+    local result = vim.json.encode({
+      matches = truncated_files,
+      is_truncated = is_truncated,
+    })
+    if not on_complete then return result, nil end
+    on_complete(result, nil)
   end
-  local result = vim.json.encode({
-    matches = truncated_files,
-    is_truncated = is_truncated,
-  })
-  if not on_complete then return result, nil end
-  on_complete(result, nil)
+
+  if on_complete then
+    Helpers.check_path_permission(abs_path, opts, function(ok, err)
+      if not ok then
+        on_complete("", err or ("No permission to access path: " .. abs_path))
+        return
+      end
+      run()
+    end)
+    return
+  end
+
+  if not Helpers.has_permission_to_access(abs_path) then return "", "No permission to access path: " .. abs_path end
+  return run()
 end
 
 return M

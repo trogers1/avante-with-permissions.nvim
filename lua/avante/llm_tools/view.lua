@@ -93,35 +93,61 @@ function M.func(input, opts)
   if not input.path then return false, "path is required" end
   if on_log then on_log("path: " .. input.path) end
   local abs_path = Helpers.get_abs_path(input.path)
-  if not Helpers.has_permission_to_access(abs_path) then return false, "No permission to access path: " .. abs_path end
-  if not Path:new(abs_path):exists() then return false, "Path not found: " .. abs_path end
-  if Path:new(abs_path):is_dir() then return false, "Path is a directory: " .. abs_path end
-  local file = io.open(abs_path, "r")
-  if not file then return false, "file not found: " .. abs_path end
-  local lines = Utils.read_file_from_buf_or_disk(abs_path)
-  local start_line = input.start_line
-  local end_line = input.end_line
-  if start_line and end_line and lines then lines = vim.list_slice(lines, start_line, end_line) end
-  local truncated_lines = {}
-  local is_truncated = false
-  local size = 0
-  for _, line in ipairs(lines or {}) do
-    size = size + #line
-    if size > 2048 * 100 then
-      is_truncated = true
-      break
+
+  local function run()
+    if not Path:new(abs_path):exists() then
+      if on_complete then return on_complete(false, "Path not found: " .. abs_path) end
+      return false, "Path not found: " .. abs_path
     end
-    table.insert(truncated_lines, line)
+    if Path:new(abs_path):is_dir() then
+      if on_complete then return on_complete(false, "Path is a directory: " .. abs_path) end
+      return false, "Path is a directory: " .. abs_path
+    end
+    local file = io.open(abs_path, "r")
+    if not file then
+      if on_complete then return on_complete(false, "file not found: " .. abs_path) end
+      return false, "file not found: " .. abs_path
+    end
+    file:close()
+    local lines = Utils.read_file_from_buf_or_disk(abs_path)
+    local start_line = input.start_line
+    local end_line = input.end_line
+    if start_line and end_line and lines then lines = vim.list_slice(lines, start_line, end_line) end
+    local truncated_lines = {}
+    local is_truncated = false
+    local size = 0
+    for _, line in ipairs(lines or {}) do
+      size = size + #line
+      if size > 2048 * 100 then
+        is_truncated = true
+        break
+      end
+      table.insert(truncated_lines, line)
+    end
+    local total_line_count = lines and #lines or 0
+    local content = truncated_lines and table.concat(truncated_lines, "\n") or ""
+    local result = vim.json.encode({
+      content = content,
+      total_line_count = total_line_count,
+      is_truncated = is_truncated,
+    })
+    if not on_complete then return result, nil end
+    on_complete(result, nil)
   end
-  local total_line_count = lines and #lines or 0
-  local content = truncated_lines and table.concat(truncated_lines, "\n") or ""
-  local result = vim.json.encode({
-    content = content,
-    total_line_count = total_line_count,
-    is_truncated = is_truncated,
-  })
-  if not on_complete then return result, nil end
-  on_complete(result, nil)
+
+  if on_complete then
+    Helpers.check_path_permission(abs_path, opts, function(ok, err)
+      if not ok then
+        on_complete(false, err or ("No permission to access path: " .. abs_path))
+        return
+      end
+      run()
+    end)
+    return
+  end
+
+  if not Helpers.has_permission_to_access(abs_path) then return false, "No permission to access path: " .. abs_path end
+  return run()
 end
 
 return M

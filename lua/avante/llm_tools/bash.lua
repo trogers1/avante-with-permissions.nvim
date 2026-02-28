@@ -4,6 +4,7 @@ local Helpers = require("avante.llm_tools.helpers")
 local Base = require("avante.llm_tools.base")
 local Config = require("avante.config")
 local Providers = require("avante.providers")
+local Permissions = require("avante.permissions")
 
 ---@class AvanteLLMTool
 local M = setmetatable({}, Base)
@@ -223,40 +224,82 @@ function M.func(input, opts)
   end
 
   local abs_path = Helpers.get_abs_path(input.path)
-  if not Helpers.has_permission_to_access(abs_path) then return false, "No permission to access path: " .. abs_path end
-  if not Path:new(abs_path):exists() then return false, "Path not found: " .. abs_path end
-  if not input.command then return false, "Command is required" end
-  if opts.on_log then opts.on_log("command: " .. input.command) end
-
-  ---change cwd to abs_path
-  ---@param output string
-  ---@param exit_code integer
-  ---@return string | boolean | nil result
-  ---@return string | nil error
-  local function handle_result(output, exit_code)
-    if exit_code ~= 0 then
-      if output then return false, "Error: " .. output .. "; Error code: " .. tostring(exit_code) end
-      return false, "Error code: " .. tostring(exit_code)
-    end
-    return output, nil
-  end
   if not opts.on_complete then return false, "on_complete not provided" end
-  Helpers.confirm(
-    "Are you sure you want to run the command: `" .. input.command .. "` in the directory: " .. abs_path,
-    function(ok, reason)
-      if not ok then
-        opts.on_complete(false, "User declined, reason: " .. (reason and reason or "unknown"))
+
+  local function proceed()
+    if not Path:new(abs_path):exists() then
+      opts.on_complete(false, "Path not found: " .. abs_path)
+      return
+    end
+    if not input.command then
+      opts.on_complete(false, "Command is required")
+      return
+    end
+
+    -- Enforce banned commands (basic guardrail)
+    local first = Utils.trim((input.command:match("^%s*(%S+)") or ""))
+    for _, banned in ipairs(banned_commands) do
+      if first == banned then
+        opts.on_complete(false, "Command is disallowed by policy: " .. banned)
         return
       end
+    end
+
+    local action, matched = Permissions.resolve_bash(input.command, Config.permission)
+    if action == "deny" then
+      opts.on_complete(false, "Permission denied by policy" .. (matched and (": bash '" .. matched .. "'") or ": bash"))
+      return
+    end
+    if opts.on_log then opts.on_log("command: " .. input.command) end
+
+    ---change cwd to abs_path
+    ---@param output string
+    ---@param exit_code integer
+    ---@return string | boolean | nil result
+    ---@return string | nil error
+    local function handle_result(output, exit_code)
+      if exit_code ~= 0 then
+        if output then return false, "Error: " .. output .. "; Error code: " .. tostring(exit_code) end
+        return false, "Error code: " .. tostring(exit_code)
+      end
+      return output, nil
+    end
+
+    local function run()
       Utils.shell_run_async(input.command, "bash -c", function(output, exit_code)
         local result, err = handle_result(output, exit_code)
         opts.on_complete(result, err)
       end, abs_path, 1000 * 60 * 2)
-    end,
-    { focus = true },
-    opts.session_ctx,
-    M.name -- Pass the tool name for permission checking
-  )
+    end
+
+    if action == "allow" then
+      run()
+      return
+    end
+
+    Helpers.confirm(
+      "Are you sure you want to run the command: `" .. input.command .. "` in the directory: " .. abs_path,
+      function(ok, reason)
+        if not ok then
+          opts.on_complete(false, "User declined, reason: " .. (reason and reason or "unknown"))
+          return
+        end
+        run()
+      end,
+      { focus = true },
+      opts.session_ctx,
+      M.name
+    )
+  end
+
+  Helpers.check_path_permission(abs_path, opts, function(ok, err)
+    if not ok then
+      opts.on_complete(false, err or ("No permission to access path: " .. abs_path))
+      return
+    end
+    proceed()
+  end)
+  return
 end
 
 return M

@@ -48,21 +48,40 @@ M.returns = {
 ---@type AvanteLLMToolFunc<{ path: string, max_depth?: integer }>
 function M.func(input, opts)
   local on_log = opts.on_log
+  local on_complete = opts.on_complete
   local abs_path = Helpers.get_abs_path(input.path)
-  if not Helpers.has_permission_to_access(abs_path) then return "", "No permission to access path: " .. abs_path end
-  if on_log then on_log("path: " .. abs_path) end
-  if on_log then on_log("max depth: " .. tostring(input.max_depth)) end
-  local files = Utils.scan_directory({
-    directory = abs_path,
-    add_dirs = true,
-    max_depth = input.max_depth,
-  })
-  local filepaths = {}
-  for _, file in ipairs(files) do
-    local uniform_path = Utils.uniform_path(file)
-    table.insert(filepaths, uniform_path)
+
+  local function run()
+    if on_log then on_log("path: " .. abs_path) end
+    if on_log then on_log("max depth: " .. tostring(input.max_depth)) end
+    local files = Utils.scan_directory({
+      directory = abs_path,
+      add_dirs = true,
+      max_depth = input.max_depth,
+    })
+    local filepaths = {}
+    for _, file in ipairs(files) do
+      local uniform_path = Utils.uniform_path(file)
+      table.insert(filepaths, uniform_path)
+    end
+    local result = vim.json.encode(filepaths)
+    if not on_complete then return result, nil end
+    on_complete(result, nil)
   end
-  return vim.json.encode(filepaths), nil
+
+  if on_complete then
+    Helpers.check_path_permission(abs_path, opts, function(ok, err)
+      if not ok then
+        on_complete("", err or ("No permission to access path: " .. abs_path))
+        return
+      end
+      run()
+    end)
+    return
+  end
+
+  if not Helpers.has_permission_to_access(abs_path) then return "", "No permission to access path: " .. abs_path end
+  return run()
 end
 
 return M

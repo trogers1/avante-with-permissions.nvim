@@ -38,6 +38,17 @@ M._defaults = {
   -- currently designating it as `copilot` provider is dangerous because: https://github.com/yetone/avante.nvim/issues/1048
   -- Of course, you can reduce the request frequency by increasing `suggestion.debounce`.
   auto_suggestions_provider = nil,
+  ---@type { bash?: table|AvantePermissionAction, external_directory?: AvantePermissionAction }
+  -- Permission policy for Avante's built-in tools (non-ACP providers).
+  -- For bash, you can use a map of glob patterns to actions (allow|ask|deny).
+  permission = {
+    -- Example:
+    -- bash = { ["*"] = "ask", ["git status*"] = "allow", ["git push*"] = "deny" },
+    bash = nil,
+    -- Controls access to paths outside project root / nvim config dir.
+    -- "deny" (default) preserves existing sandbox behavior.
+    external_directory = "deny",
+  },
   memory_summary_provider = nil,
   ---@alias Tokenizer "tiktoken" | "hf"
   ---@type Tokenizer

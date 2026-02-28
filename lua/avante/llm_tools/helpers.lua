@@ -2,6 +2,7 @@ local Utils = require("avante.utils")
 local Path = require("plenary.path")
 local Config = require("avante.config")
 local ACPConfirmAdapter = require("avante.ui.acp_confirm_adapter")
+local Permissions = require("avante.permissions")
 
 local M = {}
 
@@ -18,6 +19,8 @@ function M.get_abs_path(rel_path)
   local project_root = Utils.get_project_root()
   local p = Utils.join_paths(project_root, rel_path)
   if p:sub(-2) == "/." then p = p:sub(1, -3) end
+  -- Normalize to prevent ../ escaping the project root.
+  p = vim.fs.normalize(vim.fn.fnamemodify(p, ":p"))
   return p
 end
 
@@ -145,14 +148,82 @@ end
 ---@return boolean
 function M.has_permission_to_access(abs_path)
   if not Path:new(abs_path):is_absolute() then return false end
-  local project_root = Utils.get_project_root()
+  abs_path = vim.fs.normalize(abs_path)
+  local project_root = vim.fs.normalize(Utils.get_project_root())
   -- allow if inside project root OR inside user config dir
-  local config_dir = vim.fn.stdpath("config")
+  local config_dir = vim.fs.normalize(vim.fn.stdpath("config"))
   local in_project = abs_path:sub(1, #project_root) == project_root
   local in_config = abs_path:sub(1, #config_dir) == config_dir
   local bypass_ignore = Config.behaviour and Config.behaviour.allow_access_to_git_ignored_files
-  if not in_project and not in_config then return false end
+  if not in_project and not in_config then
+    -- Preserve existing sandbox default; only allow if explicitly configured.
+    local external = Config.permission and Config.permission.external_directory
+    if Permissions.normalize_action(external) ~= "allow" then return false end
+  end
   return bypass_ignore or not M.is_ignored(abs_path)
+end
+
+---@param abs_path string
+---@param opts AvanteLLMToolFuncOpts
+---@param cb fun(ok: boolean, err?: string): nil
+function M.check_path_permission(abs_path, opts, cb)
+  cb = vim.schedule_wrap(cb)
+  opts = opts or {}
+
+  local scope, err = Permissions.classify_path(abs_path)
+  if scope == "invalid" then
+    cb(false, err or ("Invalid path: " .. tostring(abs_path)))
+    return
+  end
+
+  local bypass_ignore = Config.behaviour and Config.behaviour.allow_access_to_git_ignored_files
+  if (scope == "project" or scope == "config") and not bypass_ignore and M.is_ignored(abs_path) then
+    cb(false, "This path is gitignored: " .. abs_path)
+    return
+  end
+
+  if scope ~= "external" then
+    cb(true)
+    return
+  end
+
+  local policy = Config.permission and Config.permission.external_directory or "deny"
+  local action = Permissions.normalize_action(policy)
+  if action == "allow" then
+    cb(true)
+    return
+  end
+  if action == "deny" then
+    cb(false, "No permission to access external path: " .. abs_path)
+    return
+  end
+
+  -- ask
+  if not opts.on_complete then
+    cb(false, "External path access requires confirmation: " .. abs_path)
+    return
+  end
+
+  local project_root = Utils.get_project_root()
+  local config_dir = vim.fn.stdpath("config")
+  M.confirm(
+    "Allow access outside project/config?\n\npath: "
+      .. abs_path
+      .. "\nproject: "
+      .. project_root
+      .. "\nconfig: "
+      .. config_dir,
+    function(ok, reason)
+      if ok then
+        cb(true)
+      else
+        cb(false, "User declined, reason: " .. (reason or "unknown"))
+      end
+    end,
+    { focus = true },
+    opts.session_ctx,
+    "external_directory"
+  )
 end
 
 ---@param path string
