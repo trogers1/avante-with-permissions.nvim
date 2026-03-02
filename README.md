@@ -1,3 +1,15 @@
+
+> [!NOTE]
+>
+> ⚠️ THIS IS A FORK ⚠️
+>
+> This repo represents the changes I have made to the much more mature Avante.nvim project.
+> I've customized and added a couple of things for my own benefit and preference (namely a more specific
+> permissions system and improved ACP support). You're welcome to use this project at your own risk, but it
+> is meant for my personal use. You're likely looking for yetone's _real_ avante repo here: https://github.com/yetone/avante.nvim
+
+---
+
 <div align="center">
   <img alt="logo" width="120" src="https://github.com/user-attachments/assets/2e2f2a58-2b28-4d11-afd1-87b65612b2de" />
   <h1>avante.nvim</h1>
@@ -11,16 +23,6 @@
   <a href="https://discord.gg/QfnEFEdSjz" target="_blank"><img src="https://img.shields.io/discord/1302530866362323016?style=flat-square&logo=discord&label=Discord&logoColor=ffffff&labelColor=7376CF&color=268165" alt="Discord" /></a>
   <a href="https://dotfyle.com/plugins/yetone/avante.nvim"><img src="https://dotfyle.com/plugins/yetone/avante.nvim/shield?style=flat-square" /></a>
 </p>
-
-> [!NOTE]
->
-> ⚠️ THIS IS A FORK ⚠️
->
-> This repo represents the changes I have made to the much more mature Avante.nvim project.
-> I've customized and added a couple of things for my own benefit and preference (namely a more specific
-> permissions system and improved ACP support). You're welcome to use this project at your own risk, but it
-> is meant for my personal use. You're likely looking for yetone's _real_ avante repo here: https://github.com/yetone/avante.nvim
-
 
 **avante.nvim** is a Neovim plugin designed to emulate the behaviour of the [Cursor](https://www.cursor.com) AI IDE. It provides users with AI-driven code suggestions and the ability to apply these recommendations directly to their source files with minimal effort.
 
